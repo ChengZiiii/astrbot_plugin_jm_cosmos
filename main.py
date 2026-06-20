@@ -25,8 +25,8 @@ from .core import (
     SubscriptionManager,
     classify_exception,
 )
-from .core.cache import JMCache
-from .utils import MessageFormatter, generate_album_filename, send_with_recall
+from .core.cache import JMCache, generate_cached_filename
+from .utils import MessageFormatter, send_with_recall
 
 # 插件名称常量
 PLUGIN_NAME = "jm_cosmos2"
@@ -36,7 +36,7 @@ PLUGIN_NAME = "jm_cosmos2"
     "jm_cosmos2",
     "GEMILUXVII",
     "JM漫画下载插件 - 支持搜索、下载禁漫天堂的漫画本子，支持加密PDF/ZIP打包",
-    "2.7.6",
+    "2.7.7",
     "https://github.com/GEMILUXVII/astrbot_plugin_jm_cosmos",
 )
 class JMCosmosPlugin(Star):
@@ -374,13 +374,16 @@ class JMCosmosPlugin(Star):
                 else self.cache.get_album_dir(album_id)
             )
 
-            # 生成文件名
-            output_name = generate_album_filename(album_id=album_id)
+            # 生成文件名（无时间戳：同一本子同一格式产物磁盘唯一，缓存才能命中）
+            output_name = generate_cached_filename(album_id=album_id)
 
-            # 生成随机密码（启用加密时，ZIP/PDF 通用）
+            # 生成或复用密码（启用加密时，ZIP/PDF 通用）
+            # 命中已缓存的密码就直接复用，避免重新加密导致旧文件密码失效
             pack_password = ""
             if self.config_manager.pack_encrypt_enabled:
-                pack_password = self._generate_pack_password()
+                pack_password = (
+                    self.cache.get_password(album_id) or self._generate_pack_password()
+                )
 
             # 打包文件
             packer = JMPacker(
@@ -391,9 +394,10 @@ class JMCosmosPlugin(Star):
             pack_result = packer.pack(
                 source_dir=source_dir,
                 output_name=output_name,
+                output_dir=source_dir,  # 输出到 album 目录内，与 is_packed() 查找路径对齐
             )
 
-            # 保存密码到缓存（启用加密时）
+            # 保存密码到缓存（启用加密时；幂等写入，复用旧密码时值不变）
             if pack_password:
                 self.cache.save_password(album_id, pack_password)
 
@@ -512,46 +516,43 @@ class JMCosmosPlugin(Star):
         pack_format = self.config_manager.pack_format
         using_cache = False
         if not force_redownload and self.cache.is_downloaded(album_id):
-            # 检查章节打包缓存（章节打包文件名包含章节号）
-            if pack_format != "none":
-                if pack_format == "long_img":
-                    pack_ext = "png"
-                else:
-                    pack_ext = pack_format
-                chapter_pack_name = f"{album_id}_Ch{chapter_idx}.{pack_ext}"
-                chapter_pack_path = self.cache.get_album_dir(album_id) / chapter_pack_name
+            # 章节打包缓存：命名规则与 packer 一致（含 _ChN），由 is_packed 统一查找；
+            # long_img 的 _long.png / _long.zip 两种候选也由 is_packed 处理
+            chapter_pack_path = self.cache.is_packed(
+                album_id, pack_format, chapter_idx=chapter_idx
+            )
 
-                if chapter_pack_path.exists():
-                    # 完全缓存命中：直接发送缓存文件
-                    yield event.plain_result(f"📦 使用缓存: {chapter_pack_path.name}")
+            if chapter_pack_path:
+                # 完全缓存命中：直接发送缓存文件
+                yield event.plain_result(f"📦 使用缓存: {chapter_pack_path.name}")
 
-                    from astrbot.api.event import MessageChain
+                from astrbot.api.event import MessageChain
 
-                    file_chain = MessageChain(
-                        [
-                            Comp.Plain(f"📦 缓存命中 — {album_id} 第{chapter_idx}章"),
-                            Comp.File(
-                                name=chapter_pack_path.name,
-                                file=str(chapter_pack_path),
-                            ),
-                        ]
+                file_chain = MessageChain(
+                    [
+                        Comp.Plain(f"📦 缓存命中 — {album_id} 第{chapter_idx}章"),
+                        Comp.File(
+                            name=chapter_pack_path.name,
+                            file=str(chapter_pack_path),
+                        ),
+                    ]
+                )
+
+                if self.config_manager.auto_recall_enabled:
+                    await send_with_recall(
+                        event,
+                        file_chain,
+                        self.config_manager.auto_recall_delay,
                     )
+                else:
+                    yield event.chain_result(file_chain.chain)
 
-                    if self.config_manager.auto_recall_enabled:
-                        await send_with_recall(
-                            event,
-                            file_chain,
-                            self.config_manager.auto_recall_delay,
-                        )
-                    else:
-                        yield event.chain_result(file_chain.chain)
+                # 发送缓存密码（如有）
+                cached_password = self.cache.get_password(album_id)
+                if cached_password:
+                    yield event.plain_result(f"🔐 打包密码：{cached_password}")
 
-                    # 发送缓存密码（如有）
-                    cached_password = self.cache.get_password(album_id)
-                    if cached_password:
-                        yield event.plain_result(f"🔐 打包密码：{cached_password}")
-
-                    return
+                return
 
             # 已下载但未打包：跳过下载，进入打包流程
             using_cache = True
@@ -624,16 +625,18 @@ class JMCosmosPlugin(Star):
                 else self.cache.get_album_dir(album_id)
             )
 
-            # 生成文件名（带章节号）
-            output_name = generate_album_filename(
+            # 生成文件名（带章节号，无时间戳）
+            output_name = generate_cached_filename(
                 album_id=album_id,
                 chapter_idx=chapter_idx,
             )
 
-            # 生成随机密码（启用加密时，ZIP/PDF 通用）
+            # 生成或复用密码（启用加密时；命中缓存复用旧密码，避免重新加密）
             pack_password = ""
             if self.config_manager.pack_encrypt_enabled:
-                pack_password = self._generate_pack_password()
+                pack_password = (
+                    self.cache.get_password(album_id) or self._generate_pack_password()
+                )
 
             # 打包
             packer = JMPacker(
@@ -644,9 +647,10 @@ class JMCosmosPlugin(Star):
             pack_result = packer.pack(
                 source_dir=source_dir,
                 output_name=output_name,
+                output_dir=source_dir,  # 输出到 album 目录内，与 is_packed() 查找路径对齐
             )
 
-            # 保存密码到缓存（启用加密时）
+            # 保存密码到缓存（启用加密时；幂等写入）
             if pack_password:
                 self.cache.save_password(album_id, pack_password)
 
@@ -1415,22 +1419,26 @@ class JMCosmosPlugin(Star):
             }
             self.cache.save_metadata(album_id, metadata)
 
-            output_name = generate_album_filename(album_id=album_id)
+            output_name = generate_cached_filename(album_id=album_id)
 
-            # 生成随机密码（启用加密时，ZIP/PDF 通用）
+            # 生成或复用密码（启用加密时；命中缓存复用旧密码，避免重新加密）
             pack_password = ""
             if self.config_manager.pack_encrypt_enabled:
-                pack_password = self._generate_pack_password()
+                pack_password = (
+                    self.cache.get_password(album_id) or self._generate_pack_password()
+                )
 
             packer = JMPacker(
                 pack_format=self.config_manager.pack_format,
                 password=pack_password,
             )
             pack_result = packer.pack(
-                source_dir=result.save_path, output_name=output_name
+                source_dir=result.save_path,
+                output_name=output_name,
+                output_dir=result.save_path,  # 输出到 album 目录内，与 is_packed() 查找路径对齐
             )
 
-            # 保存密码到缓存（启用加密时）
+            # 保存密码到缓存（启用加密时；幂等写入）
             if pack_password:
                 self.cache.save_password(album_id, pack_password)
 

@@ -327,9 +327,13 @@ class JMPacker:
             )
 
         try:
+            # 统一加 _long 后缀，区分本子原图与长图产物；
+            # 与 core.cache.JMCache.is_packed(long_img) 查找路径对齐（单一命名真相）。
+            long_name = f"{output_name}_long"
+
             # 单段：直接输出一张长图
             if len(strips) == 1:
-                output_path = output_dir / f"{output_name}.png"
+                output_path = output_dir / f"{long_name}.png"
                 strips[0].save(output_path)
                 strips[0].close()
                 return PackResult(
@@ -345,9 +349,9 @@ class JMPacker:
             tmp_dir = Path(tempfile.mkdtemp(prefix="jm_longimg_"))
             try:
                 for index, strip in enumerate(strips, 1):
-                    strip.save(tmp_dir / f"{output_name}_{index:03d}.png")
+                    strip.save(tmp_dir / f"{long_name}_{index:03d}.png")
                     strip.close()
-                zip_result = self._pack_zip(tmp_dir, output_name, output_dir)
+                zip_result = self._pack_zip(tmp_dir, long_name, output_dir)
                 return PackResult(
                     success=zip_result.success,
                     output_path=zip_result.output_path,
