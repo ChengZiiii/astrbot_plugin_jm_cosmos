@@ -2,6 +2,30 @@
 
 所有版本更新记录。
 
+## **v2.7.7** (2026-06-21)
+
+### Bug 修复
+- **修复 PDF/ZIP/长图打包缓存永不命中，导致重复打包、重复加密、磁盘堆积**
+  - 根因有二，任一都会让 `core.cache.JMCache.is_packed()` 找不到已生成的打包文件：
+    1. **命名带时间戳**：`main.py` 三处打包入口（整本 / 章节 / 增量订阅）调用的是 `generate_album_filename()`，输出形如 `123456_1718934567.zip`；而 `is_packed()` 一直按无时间戳的 `123456.zip` 查找，二者永远对不上
+    2. **输出目录错位**：`JMPacker.pack()` 默认 `output_dir=source_dir.parent`，把打包文件写到下载根目录（`downloads/123456.zip`），而 `is_packed()` 在 album 目录内查找（`downloads/123456/123456.zip`）
+  - 综合后果：第二次请求同一本子时，`is_downloaded=True` 但 `is_packed=None` → 进入「重新打包」分支 → 又生成新时间戳文件 + 新密码 + 写新文件，磁盘上 `{id}_{ts1}.zip`、`{id}_{ts2}.zip`… 不断堆积
+  - 修复：
+    - 命名统一收敛到 `core.cache.generate_cached_filename(album_id, chapter_idx?)`（无时间戳），packer 写盘与 `is_packed` 查找共用同一函数 —— 命名规则只有一处真相
+    - `main.py` 三处打包改为 `output_dir=source_dir`，打包文件落到 album 目录内，与 `is_packed` / `invalidate(pack)` 路径对齐
+    - 命中已缓存密码时直接复用 `cache.get_password()`，避免重新加密导致旧文件密码失效（`save_password` 幂等写入）
+    - 章节级缓存查找改用 `is_packed(chapter_idx=...)`，去掉 `main.py` 里重复的字符串拼接；长图多段产物（`_long.zip`）也被 `is_packed` 正确识别
+    - `JMPacker._pack_long_img` 输出统一加 `_long` 后缀（单段 → `_long.png`，多段 → `_long.zip`），与 `is_packed(long_img)` 候选路径对齐
+  - 历史遗留：磁盘上已存在的 `{id}_{ts}.zip/pdf/png` 旧文件不会被新流程识别（命名规则已变）；如需清理，对相应本子执行 `--redownload` 即可（`invalidate(scope="all")` 会 `rmtree` 整个 album 目录）
+
+### 重构
+- `utils/filename.py` 收敛为兼容性占位（空模块），`generate_album_filename` / 旧 `generate_cached_filename` 统一迁移到 `core.cache.generate_cached_filename`；`utils/__init__.py` 不再导出文件名函数，`main.py` 改从 `.core.cache` 导入
+
+### 文档
+- 更新版本号与更新时间
+
+---
+
 ## **v2.7.6** (2026-06-18)
 
 ### Bug 修复
