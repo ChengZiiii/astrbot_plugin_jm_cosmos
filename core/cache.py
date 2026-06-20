@@ -2,6 +2,14 @@
 JMComic 缓存管理模块
 
 提供下载缓存和打包文件缓存的统一管理。
+
+命名约定（与 core.packer.JMPacker 写盘保持一致，单一真相）：
+    整本 -> "{album_id}"             → 123456.zip / 123456.pdf / 123456_long.png
+    章节 -> "{album_id}_Ch{N}"       → 123456_Ch3.zip / 123456_Ch3.pdf / 123456_Ch3_long.png
+    长图多段 -> "{base}_long.zip"    （单段为 _long.png，多段为 _long.zip）
+
+无时间戳：同一本子的同一格式产物在磁盘上唯一可寻址，缓存才能稳定命中，
+避免重复打包与重复加密。
 """
 
 from __future__ import annotations
@@ -11,6 +19,28 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+def generate_cached_filename(
+    album_id: str,
+    chapter_idx: int | None = None,
+) -> str:
+    """
+    生成缓存友好的打包基名（不含后缀，无时间戳）。
+
+    main.py 调用 JMPacker.pack(output_name=...) 时传入此基名，packer 按 pack_format
+    补后缀；本模块 is_packed() 也基于同一基名补后缀去查找磁盘文件。
+
+    Args:
+        album_id: 本子 ID
+        chapter_idx: 章节序号；None 表示整本，否则附加 `_ChN` 区分章节产物
+
+    Returns:
+        基名字符串：整本 -> "123456"；章节 -> "123456_Ch3"
+    """
+    if chapter_idx is not None:
+        return f"{album_id}_Ch{chapter_idx}"
+    return album_id
 
 
 @dataclass
@@ -63,13 +93,19 @@ class JMCache:
 
         return False
 
-    def is_packed(self, album_id: str, pack_format: str) -> Path | None:
+    def is_packed(
+        self,
+        album_id: str,
+        pack_format: str,
+        chapter_idx: int | None = None,
+    ) -> Path | None:
         """
         检查是否已打包指定格式
 
         Args:
             album_id: 本子 ID
             pack_format: 打包格式 (zip/pdf/long_img/none)
+            chapter_idx: 章节序号；None 表示整本，否则查找章节级打包文件
 
         Returns:
             打包文件路径，如果不存在则返回 None
@@ -79,18 +115,24 @@ class JMCache:
 
         album_dir = self.get_album_dir(album_id)
         pack_format = pack_format.lower()
+        base = generate_cached_filename(album_id, chapter_idx)
 
+        # 候选列表：long_img 单段为 _long.png、多段为 _long.zip；其它格式只有一种后缀
         if pack_format == "zip":
-            pack_path = album_dir / f"{album_id}.zip"
+            candidates = [album_dir / f"{base}.zip"]
         elif pack_format == "pdf":
-            pack_path = album_dir / f"{album_id}.pdf"
+            candidates = [album_dir / f"{base}.pdf"]
         elif pack_format == "long_img":
-            pack_path = album_dir / f"{album_id}_long.png"
+            candidates = [
+                album_dir / f"{base}_long.png",  # 单段长图
+                album_dir / f"{base}_long.zip",  # 多段长图（自动分段时复用 zip 打包）
+            ]
         else:
             return None
 
-        if pack_path.exists():
-            return pack_path
+        for path in candidates:
+            if path.exists():
+                return path
         return None
 
     def save_metadata(self, album_id: str, metadata: dict[str, Any]) -> None:
