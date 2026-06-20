@@ -84,7 +84,7 @@
     "type": "bool",
     "description": "发送后自动删除",
     "hint": "发送文件后是否自动删除本地文件以节省空间",
-    "default": true
+    "default": false
   },
   "send_cover_preview": {
     "type": "bool",
