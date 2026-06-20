@@ -11,6 +11,7 @@ from .downloader import DownloadResult, JMDownloadManager
 from .errors import classify_exception
 from .jmcomic_loader import is_jmcomic_available
 from .packer import JMPacker
+from .permission import evaluate_permission
 from .quota import DownloadQuotaManager
 from .subscribe import SubscriptionManager
 
@@ -29,4 +30,5 @@ __all__ = [
     "JMPacker",
     "SubscriptionManager",
     "classify_exception",
+    "evaluate_permission",
 ]

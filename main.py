@@ -24,6 +24,7 @@ from .core import (
     JMPacker,
     SubscriptionManager,
     classify_exception,
+    evaluate_permission,
 )
 from .core.cache import JMCache, generate_cached_filename
 from .utils import MessageFormatter, send_with_recall
@@ -36,7 +37,7 @@ PLUGIN_NAME = "jm_cosmos2"
     "jm_cosmos2",
     "GEMILUXVII",
     "JM漫画下载插件 - 支持搜索、下载禁漫天堂的漫画本子，支持加密PDF/ZIP打包",
-    "2.7.7",
+    "2.7.8",
     "https://github.com/GEMILUXVII/astrbot_plugin_jm_cosmos",
 )
 class JMCosmosPlugin(Star):
@@ -128,9 +129,32 @@ class JMCosmosPlugin(Star):
         except Exception as e:
             logger.debug(f"开启 jmcomic 调试转储失败（忽略）: {e}")
 
+    def _is_platform_admin(self, event: AstrMessageEvent) -> bool:
+        """
+        判断用户是否为 AstrBot 平台管理员（admins_id）。
+
+        与老插件 astrbot_plugin_jmcomic 保持一致：作为 admin_list 之外的
+        第二判定来源。部分适配器下 event.is_admin() 可能抛异常，做容错。
+        """
+        try:
+            if event.is_admin():
+                return True
+        except Exception as e:
+            logger.debug(f"调用 event.is_admin() 失败，回退到 admin_list 判定: {e}")
+        return False
+
     def _check_permission(self, event: AstrMessageEvent) -> tuple[bool, str]:
         """
-        检查用户权限
+        检查用户权限（与老插件 astrbot_plugin_jmcomic 对齐的分层模型）
+
+        放行规则（详见 core.permission.evaluate_permission）：
+            1. 管理员（插件 admin_list 或 AstrBot 平台 admins_id）始终放行，
+               私聊与群聊一致，且**覆盖群白名单**——即使群不在 enabled_groups
+               中，管理员依旧可以使用。
+            2. admin_only=True（严格模式）：拒绝所有非管理员。
+            3. 非管理员私聊：一律拒绝（只有管理员能私聊使用）。
+            4. 非管理员群聊：按 enabled_groups 白名单放行；
+               白名单为空表示所有群都允许（与老插件一致）。
 
         Returns:
             (是否有权限, 错误消息)
@@ -138,15 +162,24 @@ class JMCosmosPlugin(Star):
         user_id = event.get_sender_id()
         group_id = event.get_group_id()
 
-        # 检查管理员权限
-        if not self.config_manager.is_admin(user_id):
-            return False, MessageFormatter.format_error("permission")
+        error_type = evaluate_permission(
+            is_in_admin_list=str(user_id) in self.config_manager.admin_list,
+            is_platform_admin=self._is_platform_admin(event),
+            is_private_chat=not group_id,
+            admin_only=self.config_manager.admin_only,
+            is_group_enabled=(
+                self.config_manager.is_group_enabled(group_id) if group_id else True
+            ),
+        )
 
-        # 检查群启用状态
-        if group_id and not self.config_manager.is_group_enabled(group_id):
-            return False, MessageFormatter.format_error("group_disabled")
+        if error_type is None:
+            return True, ""
 
-        return True, ""
+        logger.debug(
+            f"JM-Cosmos 命令被权限策略拦截: error_type={error_type}, "
+            f"user_id={user_id}, group_id={group_id}"
+        )
+        return False, MessageFormatter.format_error(error_type)
 
     def _make_progress_callback(self, event: AstrMessageEvent):
         """构建下载进度回调（受配置开关控制），未启用时返回 None"""

@@ -2,6 +2,36 @@
 
 所有版本更新记录。
 
+## **v2.7.8** (2026-06-21)
+
+### Bug 修复
+- **修复权限模型缺陷：所有人都能私聊使用插件命令**
+  - 根因：`JMConfigManager.is_admin()` 在 `admin_only=False`（默认）时直接返回 `True`，导致 `main.py::_check_permission()` 的管理员校验形同虚设——所有人都能在私聊与群聊里调用 `/jm`、`/jmc`、`/jms` 等命令
+  - 现与老插件 `astrbot_plugin_jmcomic` 的分层模型对齐：
+    1. 管理员（插件 `admin_list` 或 AstrBot 平台 `admins_id`）**始终放行**，私聊与群聊一致，且**覆盖群白名单**——即使群不在 `enabled_groups` 中，管理员依旧可用
+    2. `admin_only=True`（严格模式）：拒绝所有非管理员（含群聊），优先级最高
+    3. 非管理员私聊：一律拒绝（仅管理员能私聊使用）——此为本次修复的核心
+    4. 非管理员群聊：按 `enabled_groups` 白名单放行；空白名单表示所有群都允许
+  - 管理员来源扩展为两路：插件配置的 `admin_list`（主）+ 平台 `event.is_admin()`（兼容老插件行为），任一命中即视为管理员
+  - 新增私聊拒绝的专用文案 `private_non_admin`，区别于普通权限不足
+
+### 重构
+- **抽出 `core/permission.py`：纯函数 `evaluate_permission(...)` 实现分层权限策略**
+  - 将"管理员 / 严格模式 / 私聊 / 群白名单"四层判定从 `main.py::_check_permission()` 抽出，便于单测覆盖
+  - `main.py::_check_permission()` 改为薄壳：收集参数 → 调用纯函数 → 翻译错误类型为 `MessageFormatter.format_error` 消息
+  - `_is_admin_user()` 重命名拆分为 `_is_platform_admin()`，与 `admin_list` 直接判定的职责分离
+- `JMConfigManager.is_admin()` 改为事实判定（仅检查 `admin_list` 成员），不再被 `admin_only` 开关混淆；`admin_only` 现作为"严格模式"开关由 `evaluate_permission` 统一处理
+
+### 文档与配置
+- `_conf_schema.json` 更新 `admin_only` / `admin_list` / `enabled_groups` 三项的描述与 hint，明确新的分层语义
+- 更新版本号与更新时间
+
+### 测试
+- 新增 `tests/unit/test_permission.py`（12 个用例）覆盖：管理员覆盖、私聊拒绝、群白名单、严格模式、默认开放
+- 更新 `tests/unit/test_config.py`：原 `is_admin` 在 `admin_only=False` 时全员放行的断言已失效，替换为新语义（空 `admin_list` 即无管理员）的事实判定断言
+
+---
+
 ## **v2.7.7** (2026-06-21)
 
 ### Bug 修复

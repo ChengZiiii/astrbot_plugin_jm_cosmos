@@ -470,6 +470,7 @@ day(今日) week(本周) month(本月) all(全部)
             "not_found": "❌ 未找到指定的本子，请检查ID是否正确",
             "network": "❌ 网络连接失败，请稍后重试",
             "permission": "❌ 权限不足，您没有使用此功能的权限",
+            "private_non_admin": "❌ 私聊使用本插件需要管理员权限，请在群内使用或联系管理员",
             "group_disabled": "❌ 此群未启用JM漫画下载功能",
             "invalid_id": "❌ 无效的ID格式，请输入正确的数字ID",
             "download_failed": "❌ 下载失败",

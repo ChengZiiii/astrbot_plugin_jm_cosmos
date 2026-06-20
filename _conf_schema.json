@@ -118,20 +118,20 @@
   },
   "enabled_groups": {
     "type": "list",
-    "description": "启用的群列表",
-    "hint": "留空则所有群都启用。在 WebUI 中逐项添加群号即可，无需手动处理逗号或换行。",
+    "description": "群聊白名单（非管理员受限）",
+    "hint": "留空则所有群都对非管理员开放。管理员不受此列表限制，任何群都能用。在 WebUI 中逐项添加群号即可，无需手动处理逗号或换行。",
     "default": []
   },
   "admin_only": {
     "type": "bool",
-    "description": "仅管理员可用",
-    "hint": "开启后只有管理员列表中的用户才能使用插件",
+    "description": "严格管理员模式",
+    "hint": "开启后，所有命令（含群聊）都仅限管理员使用，会覆盖群白名单。默认关闭——此时私聊仅管理员可用，群聊按白名单放行非管理员，管理员始终覆盖白名单。",
     "default": false
   },
   "admin_list": {
     "type": "list",
     "description": "管理员用户ID列表",
-    "hint": "在 WebUI 中逐项添加用户ID即可。这些用户拥有管理员权限。",
+    "hint": "这些用户拥有管理员权限：私聊可用、在任何群（含未列入白名单的群）都能用。AstrBot 平台 admins_id 中的用户也自动视为管理员。在 WebUI 中逐项添加用户ID即可。",
     "default": []
   },
   "jm_username": {

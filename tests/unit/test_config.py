@@ -70,13 +70,22 @@ class TestConfigManagerDefaults:
 class TestAdminPermissions:
     """管理员权限测试"""
 
-    def test_admin_only_disabled_everyone_is_admin(self, config_manager):
-        """管理员限制关闭时所有人都有权限"""
-        assert config_manager.is_admin("any_user") is True
-        assert config_manager.is_admin("12345") is True
+    def test_admin_only_default(self, config_manager):
+        """admin_only 默认为 False（保留字段，仅作严格模式开关）"""
+        assert config_manager.admin_only is False
 
-    def test_admin_only_enabled_check_admin_list(self, config_manager_with_admin):
-        """管理员限制开启时检查管理员列表"""
+    def test_empty_admin_list_means_no_admin(self, config_manager):
+        """admin_list 为空时，is_admin 对所有用户返回 False
+
+        新语义：is_admin 只做"事实判定"（是否在 admin_list 中），
+        不再受 admin_only 开关影响。
+        """
+        assert config_manager.is_admin("any_user") is False
+        assert config_manager.is_admin("12345") is False
+
+    def test_admin_list_membership_check(self, config_manager_with_admin):
+        """is_admin 基于 admin_list 成员判定，与 admin_only 开关无关"""
+        # config_manager_with_admin 的 admin_only=True，但 is_admin 不再依赖它
         assert config_manager_with_admin.is_admin("123456") is True
         assert config_manager_with_admin.is_admin("789012") is True
         assert config_manager_with_admin.is_admin("999999") is False

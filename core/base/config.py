@@ -188,9 +188,12 @@ class JMConfigManager:
         return bool(self.jm_username and self.jm_password)
 
     def is_admin(self, user_id: str) -> bool:
-        """检查用户是否是管理员"""
-        if not self.admin_only:
-            return True  # 如果没开启管理员限制，所有人都有权限
+        """检查用户是否在插件配置的管理员列表中
+
+        注意：此方法只做"事实判定"——用户是否在 admin_list 中，
+        不再受 admin_only 开关影响。admin_only 现作为"严格模式"开关，
+        由 main.py 的 _check_permission 统一处理分层权限。
+        """
         return str(user_id) in self.admin_list
 
     def is_group_enabled(self, group_id: str) -> bool:
