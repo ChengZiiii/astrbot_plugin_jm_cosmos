@@ -241,7 +241,7 @@ class JMCosmosPlugin(Star):
             return
 
         # 解析 --redownload 标志
-        force_redownload = "--redownload" in str(event.message)
+        force_redownload = "--redownload" in event.message_str
         if force_redownload:
             self.cache.invalidate(album_id, scope="all")
             logger.info(f"用户请求重新下载，已清除缓存: {album_id}")
@@ -503,7 +503,7 @@ class JMCosmosPlugin(Star):
             return
 
         # 解析 --redownload 标志
-        force_redownload = "--redownload" in str(event.message)
+        force_redownload = "--redownload" in event.message_str
         if force_redownload:
             self.cache.invalidate(album_id, scope="all")
             logger.info(f"用户请求重新下载章节，已清除缓存: {album_id}")
