@@ -121,7 +121,7 @@ class JMConfigManager:
     @property
     def admin_list(self) -> set:
         """管理员列表（兼容 list 和旧版 string 格式）"""
-        raw = self.plugin_config.get("admin_list", "")
+        raw = self.plugin_config.get("admin_list", [])
         if isinstance(raw, list):
             return {str(item).strip() for item in raw if str(item).strip()}
         if not raw:
@@ -131,7 +131,7 @@ class JMConfigManager:
     @property
     def enabled_groups(self) -> set:
         """启用的群列表（兼容 list 和旧版 string 格式）；空集合表示所有群都启用"""
-        raw = self.plugin_config.get("enabled_groups", "")
+        raw = self.plugin_config.get("enabled_groups", [])
         if isinstance(raw, list):
             return {str(item).strip() for item in raw if str(item).strip()}
         if not raw:

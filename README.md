@@ -316,9 +316,9 @@ pip install -r requirements.txt
 | `cover_recall_enabled`   | 封面消息自动撤回           | `false`        | 仅支持 QQ/NapCat 平台 |
 | `auto_recall_enabled`    | 文件消息自动撤回           | `false`        | 仅支持 QQ/NapCat 平台 |
 | `auto_recall_delay`      | 撤回延迟 (秒)              | `60`           | 建议 30-120 |
-| `enabled_groups`         | 启用的群列表               | 空             | 逗号分隔，空=全部启用 |
+| `enabled_groups`         | 启用的群列表               | 空             | 在 WebUI 中逐项添加群号，空=全部启用 |
 | `admin_only`             | 仅管理员可用               | `false`        |  |
-| `admin_list`             | 管理员 ID 列表             | 空             | 逗号分隔，不受下载限制 |
+| `admin_list`             | 管理员 ID 列表             | 空             | 在 WebUI 中逐项添加用户ID，不受下载限制 |
 | `jm_username`            | JM账号用户名               | 空             | 面板配置可自动登录 |
 | `jm_password`            | JM账号密码                 | 空             | 命令登录重启后失效 |
 | `search_page_size`       | 搜索结果数量               | `5`            |  |
