@@ -120,17 +120,23 @@ class JMConfigManager:
 
     @property
     def admin_list(self) -> set:
-        """管理员列表"""
-        admin_str = self.plugin_config.get("admin_list", "")
-        return {a.strip() for a in admin_str.split(",") if a.strip()}
+        """管理员列表（兼容 list 和旧版 string 格式）"""
+        raw = self.plugin_config.get("admin_list", "")
+        if isinstance(raw, list):
+            return {str(item).strip() for item in raw if str(item).strip()}
+        if not raw:
+            return set()
+        return {a.strip() for a in str(raw).split(",") if a.strip()}
 
     @property
     def enabled_groups(self) -> set:
-        """启用的群列表"""
-        groups_str = self.plugin_config.get("enabled_groups", "")
-        if not groups_str:
-            return set()  # 空集合表示所有群都启用
-        return {g.strip() for g in groups_str.split(",") if g.strip()}
+        """启用的群列表（兼容 list 和旧版 string 格式）；空集合表示所有群都启用"""
+        raw = self.plugin_config.get("enabled_groups", "")
+        if isinstance(raw, list):
+            return {str(item).strip() for item in raw if str(item).strip()}
+        if not raw:
+            return set()
+        return {g.strip() for g in str(raw).split(",") if g.strip()}
 
     @property
     def search_page_size(self) -> int:
