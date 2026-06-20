@@ -7,6 +7,7 @@ JM-Cosmos II - AstrBot JM漫画下载插件
 import asyncio
 import secrets
 import string
+from datetime import datetime
 from pathlib import Path
 
 import astrbot.api.message_components as Comp
@@ -24,6 +25,7 @@ from .core import (
     SubscriptionManager,
     classify_exception,
 )
+from .core.cache import JMCache
 from .utils import MessageFormatter, generate_album_filename, send_with_recall
 
 # 插件名称常量
@@ -58,6 +60,9 @@ class JMCosmosPlugin(Star):
 
         # 初始化配置管理器
         self.config_manager = JMConfigManager(config, self.data_dir)
+
+        # 初始化缓存管理器
+        self.cache = JMCache(self.config_manager.download_dir)
 
         # 初始化下载管理器
         self.download_manager = JMDownloadManager(self.config_manager)
@@ -235,69 +240,139 @@ class JMCosmosPlugin(Star):
             yield event.plain_result(MessageFormatter.format_error("invalid_id"))
             return
 
-        # 下载前原子预留配额（管理员/不限额时跳过）
-        ok, deny_msg, quota_reserved = self._reserve_quota(event)
-        if not ok:
-            yield event.plain_result(deny_msg)
-            return
+        # 解析 --redownload 标志
+        force_redownload = "--redownload" in str(event.message)
+        if force_redownload:
+            self.cache.invalidate(album_id, scope="all")
+            logger.info(f"用户请求重新下载，已清除缓存: {album_id}")
 
-        download_succeeded = False
-        try:
-            # 发送开始下载提示
-            yield event.plain_result(f"⏳ 开始下载本子 {album_id}，请稍候...")
+        # 缓存检查：已下载则跳过下载（除非 force_redownload）
+        pack_format = self.config_manager.pack_format
+        using_cache = False
+        if not force_redownload and self.cache.is_downloaded(album_id):
+            pack_path = self.cache.is_packed(album_id, pack_format)
 
-            # 如果配置了发送封面预览，获取详情和封面（预览失败不应中断下载）
-            if self.config_manager.send_cover_preview:
-                try:
-                    detail = await self.browser.get_album_detail(album_id)
-                except Exception as preview_err:
-                    logger.debug(f"获取封面预览详情失败，跳过预览: {preview_err}")
-                    detail = None
-                if detail:
-                    # 获取封面图片
-                    cover_dir = self.config_manager.download_dir / "covers"
-                    cover_path = await self.browser.get_album_cover(album_id, cover_dir)
+            if pack_path:
+                # 完全缓存命中：直接发送缓存文件
+                yield event.plain_result(f"📦 使用缓存: {pack_path.name}")
 
-                    if cover_path and cover_path.exists():
-                        # 构建封面消息链
-                        from astrbot.api.event import MessageChain
+                from astrbot.api.event import MessageChain
 
-                        cover_chain = MessageChain(
-                            [
-                                Comp.Image(file=str(cover_path)),
-                                Comp.Plain(MessageFormatter.format_album_info(detail)),
-                            ]
-                        )
-
-                        # 根据配置决定是否对封面消息自动撤回
-                        if self.config_manager.cover_recall_enabled:
-                            await send_with_recall(
-                                event,
-                                cover_chain,
-                                self.config_manager.auto_recall_delay,
-                            )
-                        else:
-                            yield event.chain_result(cover_chain.chain)
-                    else:
-                        yield event.plain_result(
-                            MessageFormatter.format_album_info(detail)
-                        )
-
-            # 执行下载
-            result = await self.download_manager.download_album(
-                album_id, self._make_progress_callback(event)
-            )
-
-            if not result.success:
-                yield event.plain_result(
-                    MessageFormatter.format_error(
-                        "download_failed", result.error_message
-                    )
+                file_chain = MessageChain(
+                    [
+                        Comp.Plain(f"📦 缓存命中 — {album_id}"),
+                        Comp.File(
+                            name=pack_path.name,
+                            file=str(pack_path),
+                        ),
+                    ]
                 )
+
+                if self.config_manager.auto_recall_enabled:
+                    await send_with_recall(
+                        event,
+                        file_chain,
+                        self.config_manager.auto_recall_delay,
+                    )
+                else:
+                    yield event.chain_result(file_chain.chain)
+
+                # 发送缓存密码（如有）
+                cached_password = self.cache.get_password(album_id)
+                if cached_password:
+                    yield event.plain_result(f"🔐 打包密码：{cached_password}")
+
                 return
 
-            # 下载成功，配额已在预留阶段计入（管理员不计）
-            download_succeeded = True
+            # 已下载但未打包：跳过下载，进入打包流程
+            using_cache = True
+            yield event.plain_result("📦 已缓存下载，正在重新打包...")
+
+        # 下载前原子预留配额（管理员/不限额时跳过；缓存命中时跳过）
+        if not using_cache:
+            ok, deny_msg, quota_reserved = self._reserve_quota(event)
+            if not ok:
+                yield event.plain_result(deny_msg)
+                return
+        else:
+            ok, deny_msg, quota_reserved = True, "", False
+
+        download_succeeded = using_cache  # 缓存命中视为已成功
+        try:
+            if not using_cache:
+                # 发送开始下载提示
+                yield event.plain_result(f"⏳ 开始下载本子 {album_id}，请稍候...")
+
+                # 如果配置了发送封面预览，获取详情和封面（预览失败不应中断下载）
+                if self.config_manager.send_cover_preview:
+                    try:
+                        detail = await self.browser.get_album_detail(album_id)
+                    except Exception as preview_err:
+                        logger.debug(f"获取封面预览详情失败，跳过预览: {preview_err}")
+                        detail = None
+                    if detail:
+                        # 获取封面图片
+                        cover_dir = self.config_manager.download_dir / "covers"
+                        cover_path = await self.browser.get_album_cover(album_id, cover_dir)
+
+                        if cover_path and cover_path.exists():
+                            # 构建封面消息链
+                            from astrbot.api.event import MessageChain
+
+                            cover_chain = MessageChain(
+                                [
+                                    Comp.Image(file=str(cover_path)),
+                                    Comp.Plain(MessageFormatter.format_album_info(detail)),
+                                ]
+                            )
+
+                            # 根据配置决定是否对封面消息自动撤回
+                            if self.config_manager.cover_recall_enabled:
+                                await send_with_recall(
+                                    event,
+                                    cover_chain,
+                                    self.config_manager.auto_recall_delay,
+                                )
+                            else:
+                                yield event.chain_result(cover_chain.chain)
+                        else:
+                            yield event.plain_result(
+                                MessageFormatter.format_album_info(detail)
+                            )
+
+                # 执行下载
+                result = await self.download_manager.download_album(
+                    album_id, self._make_progress_callback(event)
+                )
+
+                if not result.success:
+                    yield event.plain_result(
+                        MessageFormatter.format_error(
+                            "download_failed", result.error_message
+                        )
+                    )
+                    return
+
+                # 下载成功，配额已在预留阶段计入（管理员不计）
+                download_succeeded = True
+
+                # 保存下载元数据到缓存
+                metadata = {
+                    "album_id": album_id,
+                    "title": result.title,
+                    "author": result.author,
+                    "chapter_count": result.photo_count,
+                    "image_count": result.image_count,
+                    "pack_format": pack_format,
+                    "cached_at": datetime.now().isoformat(),
+                }
+                self.cache.save_metadata(album_id, metadata)
+
+            # 确定打包源目录
+            source_dir = (
+                result.save_path if not using_cache
+                else self.cache.get_album_dir(album_id)
+            )
 
             # 生成文件名
             output_name = generate_album_filename(album_id=album_id)
@@ -309,16 +384,30 @@ class JMCosmosPlugin(Star):
 
             # 打包文件
             packer = JMPacker(
-                pack_format=self.config_manager.pack_format,
+                pack_format=pack_format,
                 password=pack_password,
             )
 
             pack_result = packer.pack(
-                source_dir=result.save_path,
+                source_dir=source_dir,
                 output_name=output_name,
             )
 
-            result_msg = MessageFormatter.format_download_result(result, pack_result)
+            # 保存密码到缓存（启用加密时）
+            if pack_password:
+                self.cache.save_password(album_id, pack_password)
+
+            # 构建结果消息
+            if not using_cache:
+                result_msg = MessageFormatter.format_download_result(result, pack_result)
+            else:
+                # 从缓存元数据构建简化消息
+                cached_meta = self.cache.get_metadata(album_id) or {}
+                result_msg = (
+                    f"✅ 重新打包完成！\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📖 {cached_meta.get('title', album_id)}"
+                )
 
             if (
                 pack_result.success
@@ -356,8 +445,8 @@ class JMCosmosPlugin(Star):
                 if pack_password:
                     yield event.plain_result(f"🔐 打包密码：{pack_password}")
 
-                # 自动清理
-                if self.config_manager.auto_delete_after_send:
+                # 自动清理（仅清理非缓存文件，避免删除缓存）
+                if self.config_manager.auto_delete_after_send and not using_cache:
                     JMPacker.cleanup(result.save_path)
                     JMPacker.cleanup(pack_result.output_path)
             else:
@@ -413,52 +502,127 @@ class JMCosmosPlugin(Star):
             yield event.plain_result("❌ 章节序号必须是数字")
             return
 
-        # 下载前原子预留配额（管理员/不限额时跳过）
-        ok, deny_msg, quota_reserved = self._reserve_quota(event)
-        if not ok:
-            yield event.plain_result(deny_msg)
-            return
+        # 解析 --redownload 标志
+        force_redownload = "--redownload" in str(event.message)
+        if force_redownload:
+            self.cache.invalidate(album_id, scope="all")
+            logger.info(f"用户请求重新下载章节，已清除缓存: {album_id}")
 
-        download_succeeded = False
-        try:
-            yield event.plain_result(
-                f"⏳ 正在获取本子 {album_id} 的第 {chapter_idx} 章节信息..."
-            )
+        # 缓存检查：已下载则跳过下载（除非 force_redownload）
+        pack_format = self.config_manager.pack_format
+        using_cache = False
+        if not force_redownload and self.cache.is_downloaded(album_id):
+            # 检查章节打包缓存（章节打包文件名包含章节号）
+            if pack_format != "none":
+                if pack_format == "long_img":
+                    pack_ext = "png"
+                else:
+                    pack_ext = pack_format
+                chapter_pack_name = f"{album_id}_Ch{chapter_idx}.{pack_ext}"
+                chapter_pack_path = self.cache.get_album_dir(album_id) / chapter_pack_name
 
-            # 获取章节的真正 photo_id
-            chapter_info = await self.browser.get_photo_id_by_index(
-                album_id, chapter_idx
-            )
+                if chapter_pack_path.exists():
+                    # 完全缓存命中：直接发送缓存文件
+                    yield event.plain_result(f"📦 使用缓存: {chapter_pack_path.name}")
 
-            if chapter_info is None:
-                yield event.plain_result(
-                    f"❌ 第 {chapter_idx} 章节不存在，请检查章节序号"
-                )
-                return
+                    from astrbot.api.event import MessageChain
 
-            photo_id, photo_title, total_chapters = chapter_info
-
-            yield event.plain_result(
-                f"📖 找到章节: {photo_title}\n"
-                f"📚 章节: {chapter_idx}/{total_chapters}\n"
-                f"⏳ 开始下载..."
-            )
-
-            # 使用真正的 photo_id 下载
-            result = await self.download_manager.download_photo(
-                photo_id, self._make_progress_callback(event)
-            )
-
-            if not result.success:
-                yield event.plain_result(
-                    MessageFormatter.format_error(
-                        "download_failed", result.error_message
+                    file_chain = MessageChain(
+                        [
+                            Comp.Plain(f"📦 缓存命中 — {album_id} 第{chapter_idx}章"),
+                            Comp.File(
+                                name=chapter_pack_path.name,
+                                file=str(chapter_pack_path),
+                            ),
+                        ]
                     )
-                )
-                return
 
-            # 下载成功，配额已在预留阶段计入（管理员不计）
-            download_succeeded = True
+                    if self.config_manager.auto_recall_enabled:
+                        await send_with_recall(
+                            event,
+                            file_chain,
+                            self.config_manager.auto_recall_delay,
+                        )
+                    else:
+                        yield event.chain_result(file_chain.chain)
+
+                    # 发送缓存密码（如有）
+                    cached_password = self.cache.get_password(album_id)
+                    if cached_password:
+                        yield event.plain_result(f"🔐 打包密码：{cached_password}")
+
+                    return
+
+            # 已下载但未打包：跳过下载，进入打包流程
+            using_cache = True
+            yield event.plain_result("📦 已缓存下载，正在重新打包...")
+
+        # 下载前原子预留配额（管理员/不限额时跳过；缓存命中时跳过）
+        if not using_cache:
+            ok, deny_msg, quota_reserved = self._reserve_quota(event)
+            if not ok:
+                yield event.plain_result(deny_msg)
+                return
+        else:
+            ok, deny_msg, quota_reserved = True, "", False
+
+        download_succeeded = using_cache  # 缓存命中视为已成功
+        try:
+            if not using_cache:
+                yield event.plain_result(
+                    f"⏳ 正在获取本子 {album_id} 的第 {chapter_idx} 章节信息..."
+                )
+
+                # 获取章节的真正 photo_id
+                chapter_info = await self.browser.get_photo_id_by_index(
+                    album_id, chapter_idx
+                )
+
+                if chapter_info is None:
+                    yield event.plain_result(
+                        f"❌ 第 {chapter_idx} 章节不存在，请检查章节序号"
+                    )
+                    return
+
+                photo_id, photo_title, total_chapters = chapter_info
+
+                yield event.plain_result(
+                    f"📖 找到章节: {photo_title}\n"
+                    f"📚 章节: {chapter_idx}/{total_chapters}\n"
+                    f"⏳ 开始下载..."
+                )
+
+                # 使用真正的 photo_id 下载
+                result = await self.download_manager.download_photo(
+                    photo_id, self._make_progress_callback(event)
+                )
+
+                if not result.success:
+                    yield event.plain_result(
+                        MessageFormatter.format_error(
+                            "download_failed", result.error_message
+                        )
+                    )
+                    return
+
+                # 下载成功，配额已在预留阶段计入（管理员不计）
+                download_succeeded = True
+
+                # 保存下载元数据到缓存
+                metadata = {
+                    "album_id": album_id,
+                    "chapter_idx": chapter_idx,
+                    "title": result.title,
+                    "pack_format": pack_format,
+                    "cached_at": datetime.now().isoformat(),
+                }
+                self.cache.save_metadata(album_id, metadata)
+
+            # 确定打包源目录
+            source_dir = (
+                result.save_path if not using_cache
+                else self.cache.get_album_dir(album_id)
+            )
 
             # 生成文件名（带章节号）
             output_name = generate_album_filename(
@@ -473,16 +637,30 @@ class JMCosmosPlugin(Star):
 
             # 打包
             packer = JMPacker(
-                pack_format=self.config_manager.pack_format,
+                pack_format=pack_format,
                 password=pack_password,
             )
 
             pack_result = packer.pack(
-                source_dir=result.save_path,
+                source_dir=source_dir,
                 output_name=output_name,
             )
 
-            result_msg = MessageFormatter.format_download_result(result, pack_result)
+            # 保存密码到缓存（启用加密时）
+            if pack_password:
+                self.cache.save_password(album_id, pack_password)
+
+            # 构建结果消息
+            if not using_cache:
+                result_msg = MessageFormatter.format_download_result(result, pack_result)
+            else:
+                # 从缓存元数据构建简化消息
+                cached_meta = self.cache.get_metadata(album_id) or {}
+                result_msg = (
+                    f"✅ 重新打包完成！\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📖 {cached_meta.get('title', album_id)} 第{chapter_idx}章"
+                )
 
             if (
                 pack_result.success
@@ -519,7 +697,8 @@ class JMCosmosPlugin(Star):
                 if pack_password:
                     yield event.plain_result(f"🔐 打包密码：{pack_password}")
 
-                if self.config_manager.auto_delete_after_send:
+                # 自动清理（仅清理非缓存文件，避免删除缓存）
+                if self.config_manager.auto_delete_after_send and not using_cache:
                     JMPacker.cleanup(result.save_path)
                     JMPacker.cleanup(pack_result.output_path)
             else:
@@ -1226,6 +1405,16 @@ class JMCosmosPlugin(Star):
             # 下载成功，配额已在预留阶段计入（管理员不计）
             download_succeeded = True
 
+            # 保存元数据到缓存
+            metadata = {
+                "album_id": album_id,
+                "title": detail.get("title", "Unknown"),
+                "chapter_count": current,
+                "pack_format": self.config_manager.pack_format,
+                "cached_at": datetime.now().isoformat(),
+            }
+            self.cache.save_metadata(album_id, metadata)
+
             output_name = generate_album_filename(album_id=album_id)
 
             # 生成随机密码（启用加密时，ZIP/PDF 通用）
@@ -1240,6 +1429,10 @@ class JMCosmosPlugin(Star):
             pack_result = packer.pack(
                 source_dir=result.save_path, output_name=output_name
             )
+
+            # 保存密码到缓存（启用加密时）
+            if pack_password:
+                self.cache.save_password(album_id, pack_password)
 
             # 同步更新订阅记录的已知章节数
             if self.subscription_manager.exists(umo, album_id):

@@ -9,3 +9,8 @@ dependencies = [
     "pymupdf>=1.23.0",
     "pyzipper>=0.3.6",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
