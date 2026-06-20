@@ -91,7 +91,7 @@ def integration_config(temp_download_dir: Path) -> dict[str, Any]:
         "max_concurrent_photos": 2,
         "max_concurrent_images": 3,
         "pack_format": "zip",
-        "pack_password": "",
+        "pack_encrypt_enabled": False,
         "auto_delete_after_send": False,
         "send_cover_preview": True,
         "admin_only": False,

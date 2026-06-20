@@ -44,7 +44,7 @@ class TestConfigManagerDefaults:
     def test_pack_format_default(self, config_manager):
         """测试默认打包格式"""
         assert config_manager.pack_format == "zip"
-        assert config_manager.pack_password == ""
+        assert config_manager.pack_encrypt_enabled is False
 
     def test_auto_delete_default(self, config_manager):
         """测试自动删除默认启用"""
@@ -146,10 +146,10 @@ class TestCustomConfig:
         """测试自定义打包设置"""
         from core.base import JMConfigManager
 
-        config = {"pack_format": "pdf", "pack_password": "secret123"}
+        config = {"pack_format": "pdf", "pack_encrypt_enabled": True}
         manager = JMConfigManager(config, data_dir)
         assert manager.pack_format == "pdf"
-        assert manager.pack_password == "secret123"
+        assert manager.pack_encrypt_enabled is True
 
     def test_proxy_configuration(self, data_dir):
         """测试代理配置"""

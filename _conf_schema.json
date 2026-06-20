@@ -74,16 +74,10 @@
       "none"
     ]
   },
-  "pack_password": {
-    "type": "string",
-    "description": "打包密码",
-    "hint": "为ZIP或PDF设置密码，留空则不加密",
-    "default": ""
-  },
-  "filename_show_password": {
+  "pack_encrypt_enabled": {
     "type": "bool",
-    "description": "文件名显示密码",
-    "hint": "开启后在文件名末尾添加 #PWxxx 提示（仅当设置了密码时生效）。注意：会把打包密码暴露在文件名/聊天记录/日志中，请谨慎开启",
+    "description": "打包随机密码加密",
+    "hint": "开启后，每次打包时自动生成随机 4 位密码，支持 ZIP 和 PDF 格式，并在发送文件后单独提示密码。",
     "default": false
   },
   "auto_delete_after_send": {

@@ -5,6 +5,8 @@ JM-Cosmos II - AstrBot JM漫画下载插件
 """
 
 import asyncio
+import secrets
+import string
 from pathlib import Path
 
 import astrbot.api.message_components as Comp
@@ -166,6 +168,12 @@ class JMCosmosPlugin(Star):
 
         return _on_progress
 
+    @staticmethod
+    def _generate_pack_password(length: int = 4) -> str:
+        """生成随机打包密码（4 位，排除易混淆字符 I/O/l/o/0/1）"""
+        alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+        return "".join(secrets.choice(alphabet) for _ in range(length))
+
     def _reserve_quota(self, event: AstrMessageEvent) -> tuple[bool, str, bool]:
         """
         下载前原子预留配额（管理员与不限额时跳过）。
@@ -292,16 +300,17 @@ class JMCosmosPlugin(Star):
             download_succeeded = True
 
             # 生成文件名
-            output_name = generate_album_filename(
-                album_id=album_id,
-                password=self.config_manager.pack_password,
-                show_password=self.config_manager.filename_show_password,
-            )
+            output_name = generate_album_filename(album_id=album_id)
+
+            # 生成随机密码（启用加密时，ZIP/PDF 通用）
+            pack_password = ""
+            if self.config_manager.pack_encrypt_enabled:
+                pack_password = self._generate_pack_password()
 
             # 打包文件
             packer = JMPacker(
                 pack_format=self.config_manager.pack_format,
-                password=self.config_manager.pack_password,
+                password=pack_password,
             )
 
             pack_result = packer.pack(
@@ -342,6 +351,10 @@ class JMCosmosPlugin(Star):
                     )
                 else:
                     yield event.chain_result(file_chain.chain)
+
+                # 发送随机密码（启用加密时）
+                if pack_password:
+                    yield event.plain_result(f"🔐 打包密码：{pack_password}")
 
                 # 自动清理
                 if self.config_manager.auto_delete_after_send:
@@ -450,15 +463,18 @@ class JMCosmosPlugin(Star):
             # 生成文件名（带章节号）
             output_name = generate_album_filename(
                 album_id=album_id,
-                password=self.config_manager.pack_password,
                 chapter_idx=chapter_idx,
-                show_password=self.config_manager.filename_show_password,
             )
+
+            # 生成随机密码（启用加密时，ZIP/PDF 通用）
+            pack_password = ""
+            if self.config_manager.pack_encrypt_enabled:
+                pack_password = self._generate_pack_password()
 
             # 打包
             packer = JMPacker(
                 pack_format=self.config_manager.pack_format,
-                password=self.config_manager.pack_password,
+                password=pack_password,
             )
 
             pack_result = packer.pack(
@@ -498,6 +514,10 @@ class JMCosmosPlugin(Star):
                     )
                 else:
                     yield event.chain_result(file_chain.chain)
+
+                # 发送随机密码（启用加密时）
+                if pack_password:
+                    yield event.plain_result(f"🔐 打包密码：{pack_password}")
 
                 if self.config_manager.auto_delete_after_send:
                     JMPacker.cleanup(result.save_path)
@@ -1206,14 +1226,16 @@ class JMCosmosPlugin(Star):
             # 下载成功，配额已在预留阶段计入（管理员不计）
             download_succeeded = True
 
-            output_name = generate_album_filename(
-                album_id=album_id,
-                password=self.config_manager.pack_password,
-                show_password=self.config_manager.filename_show_password,
-            )
+            output_name = generate_album_filename(album_id=album_id)
+
+            # 生成随机密码（启用加密时，ZIP/PDF 通用）
+            pack_password = ""
+            if self.config_manager.pack_encrypt_enabled:
+                pack_password = self._generate_pack_password()
+
             packer = JMPacker(
                 pack_format=self.config_manager.pack_format,
-                password=self.config_manager.pack_password,
+                password=pack_password,
             )
             pack_result = packer.pack(
                 source_dir=result.save_path, output_name=output_name
@@ -1223,7 +1245,7 @@ class JMCosmosPlugin(Star):
             if self.subscription_manager.exists(umo, album_id):
                 self.subscription_manager.update_count(umo, album_id, current)
 
-            async for msg in self._emit_packed_file(event, result, pack_result):
+            async for msg in self._emit_packed_file(event, result, pack_result, pack_password):
                 yield msg
 
         except Exception as e:
@@ -1234,7 +1256,7 @@ class JMCosmosPlugin(Star):
             if not download_succeeded:
                 self._refund_quota(event, quota_reserved)
 
-    async def _emit_packed_file(self, event: AstrMessageEvent, result, pack_result):
+    async def _emit_packed_file(self, event: AstrMessageEvent, result, pack_result, pack_password: str = ""):
         """统一处理打包文件的发送（含自动撤回与清理），供下载类命令复用"""
         result_msg = MessageFormatter.format_download_result(result, pack_result)
 
@@ -1261,6 +1283,10 @@ class JMCosmosPlugin(Star):
                 )
             else:
                 yield event.chain_result(file_chain.chain)
+
+            # 发送随机密码（启用加密时）
+            if pack_password:
+                yield event.plain_result(f"🔐 打包密码：{pack_password}")
 
             if self.config_manager.auto_delete_after_send:
                 JMPacker.cleanup(result.save_path)

@@ -89,14 +89,9 @@ class JMConfigManager:
         return self.plugin_config.get("pack_format", "zip")
 
     @property
-    def pack_password(self) -> str:
-        """打包密码"""
-        return self.plugin_config.get("pack_password", "")
-
-    @property
-    def filename_show_password(self) -> bool:
-        """是否在文件名中显示密码提示"""
-        return self.plugin_config.get("filename_show_password", False)
+    def pack_encrypt_enabled(self) -> bool:
+        """是否启用随机密码加密（ZIP/PDF 通用）"""
+        return self.plugin_config.get("pack_encrypt_enabled", False)
 
     @property
     def auto_delete_after_send(self) -> bool:
