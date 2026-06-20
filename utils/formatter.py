@@ -438,8 +438,12 @@ day(今日) week(本周) month(本月) all(全部)
 /jmsublist      - 查看订阅列表
 /jmupdate <ID>  - 下载新增章节
 
+【标志】
+--redownload - 强制重新下载，忽略缓存（可用于 /jm 和 /jmc 命令）
+
 【使用示例】
 /jm 123456       - 下载ID为123456的本子
+/jm 123456 --redownload - 强制重新下载ID为123456的本子
 /jms 标签名 2    - 搜索包含该标签的漫画（第2页）
 /jmrank week     - 查看周排行榜
 /jmrec hanman    - 浏览韩漫热门
